@@ -1,0 +1,51 @@
+#+TITLE: 项目规划
+
+* TODO NLP 系列课程
+
+** TODO 人工智能数学基础 :Preparation:
+DEADLINE: <2019-06-29 六 10:30>
+** TODO 斯坦福算法分析与设计 :Preparation:
+
+* TODO 微信公众号
+  SCHEDULED: <2019-07-06 六 .+1w>
+
+** DONE 接入聚宽数据源，实现盘中实时更新技术指标与选股
+* TODO Qt 基础学习
+* TODO 数据结构 (Python)
+* WAITING 动手学深度学习 [0%]
+  :LOGBOOK:
+  - State "WAITING"    from "SOMEDAY"    [2019-06-29 六 19:41] \\
+    缺乏实践，理论基础筑于浮沙之上，先夯实基础先
+  - State "SOMEDAY"    from "WAITING"    [2019-06-29 六 19:41]
+  - State "DONE"       from "STARTED"    [2019-06-29 六 19:40]
+  :END:
+** TODO 计算机视觉 [0/13]
+*** TODO 图像增广
+*** TODO 微调
+*** TODO 目标检测和边界框
+*** TODO 锚框
+*** TODO 多尺度目标检测
+*** TODO 目标检测数据集
+*** TODO 单发多框检测
+*** TODO 区域卷积神经网络 (R-CNN) 系列
+*** TODO 语义分割和数据集
+*** TODO 全卷积网络 (FCN)
+*** TODO 样式迁移
+*** TODO 实战 Kaggle 比赛：图像分类 (CIFAR-10)
+*** TODO 实战 Kaggle 比赛：狗的品种识别 (ImageNet Dogs)
+
+** TODO 自然语言处理 [0/12]
+
+*** TODO 词嵌入 (~word2vec~)
+*** TODO 近似训练
+*** TODO word2vec 实现
+*** TODO 子词嵌入 (~fastText~)
+*** TODO 全局变量的词嵌入 (~GloVe~)
+*** TODO 求近义词和类比词
+*** TODO 文本情感分类：使用循环神经网络
+*** TODO 文本情感分类：使用卷积神经网络 (~textCNN~)
+*** TODO 编码器 - 解码器 (~seq2seq~)
+*** TODO 束搜索
+*** TODO 注意力机制
+*** TODO 机器翻译
+    

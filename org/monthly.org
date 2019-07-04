@@ -1,0 +1,7 @@
+#+TITLE: 月度计划
+
+* TODO 人工智能数学基础
+
+* TODO Python 数据结构
+
+* TODO Qt 基础

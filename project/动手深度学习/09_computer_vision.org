@@ -1,0 +1,997 @@
+#+TITLE: 计算机视觉
+
+* 图像增广
+
+#+BEGIN_QUOTE
+图像增广 (~image augmentation~) 技术通过对训练图像做一系列随机改变，来产生相似但
+又不同的训练样本，从而扩大训练数据集的规模。
+
+图像增广另一个解释是，随机改变训练样本可以降低模型对某些属性的依赖，从而提高模型
+的泛化能力。
+#+END_QUOTE
+
+- 导入常用包
+
+  #+BEGIN_SRC python
+import mxnet as mx
+from mxnet import autograd, gluon, image, init, nd
+from mxnet.gluon import data as gdata, loss as gloss, utils as gutils
+import sys
+import time
+  #+END_SRC
+
+- 定义设置函数
+
+  #+BEGIN_SRC python
+import matplotlib.pyplot as plt
+from IPython import display
+
+def use_svg_display():
+    display.set_matplotlib_formats("svg")
+
+def set_figsize(figsize=(3.5, 2.5)):
+    use_svg_display()
+    plt.rcParams['figure.figsize'] = figsize
+  #+END_SRC
+
+** 常用的图像增广方法
+
+1. 原始图像
+
+   - 图像展示
+
+      #+BEGIN_SRC python
+   set_figsize()
+   img = image.imread("img/cat1.jpg")
+   plt.imshow(img.asnumpy())
+      #+END_SRC
+
+   - 绘图函数
+
+     #+BEGIN_SRC python
+def show_images(imgs, num_row, num_cols, scale=2):
+    figsize = (num_rows * scale, num_cols * scale)
+    _, axes = plt.subplots(num_rows, num_cols, figsize=figsize)
+    for i in range(num_rows):
+        for j in range(num_cols):
+            # 这里需要注意，i x num_cols, 计数是每个 i 对应 num_cols
+            axes[i][j].imshow(img[i*num_cols + j].asnumpy())
+            axes[i][j].axes.get_xaxis().set_visible(False)
+            axes[i][j].axes.get_yaxis().set_visible(False)
+    return axes
+     #+END_SRC
+
+   -  辅助函数
+
+     #+BEGIN_SRC python
+def apply(img, aug, num_rows=2, num_cols=4, scale=1.5):
+"""
+大部分图像增广方法具有一定随机性，为了方便观察图像增广效果，定义
+apply 函数, 对输入图像 img 多次运行增广方法 aug 并展示效果
+"""
+Y = [aug(img) for _ in range(num_rows * num_cols)]
+show_images(Y, num_rows, num_cols, scale)
+ #+END_SRC
+2. 翻转和裁剪
+
+   #+BEGIN_QUOTE
+   左右翻转通常不改变物体的类别。
+   #+END_QUOTE
+
+   - 左右翻转
+
+     #+BEGIN_SRC python
+apply(img, gdata.vision.transforms.RandomFlipLeftRight())
+     #+END_SRC
+
+   - 上下翻转
+
+     #+BEGIN_SRC python
+apply(img, gdata.vision.transforms.RandomFlipTopBottom())
+     #+END_SRC
+
+   - 裁剪
+
+     #+BEGIN_SRC python
+# 随机裁剪原面积 10% ~ 100% 区域，区域宽高比随机取 0.5 ~ 2.0, 然后将该区域宽高缩放到 200 像素
+shape_aug = gdata.vision.transforms.RandomResizedCrop((200, 200), scale=(0.1, 1), ratio=(0.5, 2))
+apply(img, shape_aug)
+     #+END_SRC
+3. 变化颜色
+
+   #+BEGIN_QUOTE
+可以从 4 个方面改变图像的颜色：亮度、对比度、饱和度和色调
+   #+END_QUOTE
+
+   #+BEGIN_SRC python
+# 将图像亮度随机变化为原来的 50%, 50%~150%
+apply(img, gdata.vision.transforms.RandomBrightness(0.5))
+# 随机变化图像色调
+apply(img, gdata.vision.transforms.RandomHue(0.5))
+# 创建 RandomColorJitter 实例，同时设置如何随机变化图像的亮度、对比度、饱和度和色调
+color_aug = gdata.vision.transforms.RandomColorJitter(
+    brightness=0.5, contrast=0.5, saturation=0.5, hue=0.5
+)
+apply(img, color_aug)
+   #+END_SRC
+4. 叠加多个图像增广方法
+
+   #+BEGIN_SRC python
+augs = gdata.vision.transforms.Compose([gdata.vision.transforms.RandomFlipLeftRight(),
+                                        color_aug,
+                                        shape_aug])
+apply(img, augs)
+   #+END_SRC
+
+** 使用图像增广训练模型
+
+- 为了在预测时得到确定的结果，我们通常只将图像增广应用到训练样本上，而不在预测时使
+  用含随机操作的图像增广， ~ToTensor~ 将小批量图像转换为 MxNet 需要的格式，即形
+  状为(批量大小 x 通道数 x 高 x 宽), 值域在 $[0, 1]$ 之间且类型为 32 位浮点数
+
+#+BEGIN_SRC python
+flip_aug = gdata.vision.transforms.Compose([
+    gdata.vision.transforms.RandomFlipLeftRight(),
+    gdata.vision.transforms.ToTensor() # ToTensor 将小批量图像转换为 MxNet 需要的格式，即形状为 (批量大小 x 通道数 x 高 x 宽) 值域在 0 ~ 1 之间且类型为 32 位浮点数
+])
+
+no_aug = gdata.vision.transforms.Compose([gdata.vision.transforms.ToTensor()])
+#+END_SRC
+
+- 定义辅助函数方便读取图像
+
+  #+BEGIN_SRC python
+num_workers = 0 if sys.platform.startswith("win32") else 4
+
+def load_cifar10(is_train, augs, batch_size):
+    # transform_first 将图像增广用到每个训练样本 (图像和标签) 的第一个元素，即图像上
+    return gdata.DataLoader(
+        gdata.vision.CIFAR10(train=is_train).transform_first(augs),
+        batch_size=batch_size, shuffle=is_train, num_workers=num_workers
+    )
+  #+END_SRC
+
+1. 使用多 GPU 训练模型
+
+   - 获取所有可用 GPU
+
+     #+BEGIN_SRC python
+def try_all_gpus():
+    ctxes = []
+    try:
+        # 默认最多有 16 个 GPU
+        for i in range(16):
+            ctx = mx.gpu(i)
+            _ = nd.array([0], ctx=ctx)
+    except mx.base.MXNetError:
+        pass
+    if not ctxes:
+        ctxes = [mx.cpu()]
+    return ctxes
+     #+END_SRC
+
+   - 将小批量样本 =batch= 划分并复制到 =ctx= 变量所指定的各个显存上
+
+     #+BEGIN_SRC python
+def _get_batch(batch, ctx):
+    features, labels = batch
+    if labels.dtype != features.dtype:
+        labels = labels.astype(features.dtype)
+    return (gutils.split_and_load(features, ctx),
+        gutils.split_and_load(labels, ctx), features.shape[0])
+     #+END_SRC
+
+   - 通过辅助函数 =_get_batch= 使用 =ctx= 变量所包含的所有 GPU 来评价模型
+
+     #+BEGIN_SRC python
+def evaluate_accuracy(data_iter, net, ctx=[mx.cpu()]):
+    if isinstance(ctx, mx.Context):
+        ctx = [ctx]
+    acc_sum, n = nd.array([0]), 0
+    for batch in data_iter:
+        features, labels, _ = _get_batch(batch, ctx)
+        for X, y in zip(features, labels):
+            y = y.astype("float32")
+            acc_sum += (net(X).argmax(axis=1) == y).sum().copyto(mx.cpu())
+            n += y.size
+        acc_sum.wait_to_read()
+    return acc_sum.asscalar() / n
+     #+END_SRC
+
+   - 定义 =train= 函数使用多 GPU 训练并评价模型
+
+     #+BEGIN_SRC python
+def train(train_iter, test_iter, net, loss, trainer, ctx, num_epochs):
+   print("training on", ctx)
+   if isinstance(ctx, mx.Context):
+       ctx = [ctx]
+   for epoch in range(num_epochs):
+       train_l_sum, train_acc_sum, n, m, start = 0., 0., 0, 0, time.time()
+       for i, batch in enumerate(train_iter):
+           Xs, ys, batch_size = _get_batch(batch, ctx)
+           ls = []
+           with autograd.record():
+               y_hats = [net(X) for X in Xs]
+               ls = [loss(y_hat, y) for y_hat, y in zip(y_hats, ys)]
+               for l in ls:
+                   l.backward()
+               trainer.step(batch_size)
+               train_l_sum += sum([l.sum().asscalar() for l in ls])
+               n += sum([l.size for l in ls])
+               train_acc_sum += sum([(y_hat.argmax(axis=1) == y).sum().asscalar()
+                                     for y_hat, y in zip(y_hat, ys)])
+               m += sum([y.size for y in ys])
+           test_acc = evaluate_accuracy(test_iter, net, ctx)
+       print("Epoch {}, loss {}, train acc {}, test acc {} time {} sec".
+                 format(epoch+1, train_l_sum/n, train_acc_sum/m, test_acc, time.time() - start))
+    #+END_SRC
+
+2. 使用图像增广训练模型
+
+   #+BEGIN_SRC python
+def train_with_data_aug(train_augs, test_augs, lr=0.001):
+   batch_size, ctx, net = 256, try_all_gpus(), utils.resnet18(10)
+   net.initialize()
+   trainer = gluon.Trainer(net.collect_params(), "adam", {"learning_rate": lr})
+   loss = gloss.SoftmaxCrossEntropyLoss()
+   train_iter = load_cifar10(True, train_augs, batch_size)
+   test_iter = load_cifar10(False, test_augs, batch_size)
+   train(train_iter, test_iter, net, loss, trainer, ctx, num_epochs=10)
+
+   #+END_SRC
+
+** 小结
+
+* 微调
+* 目标检测和边界框
+* 锚框
+
+** 导入需要用到的包
+
+#+BEGIN_SRC python
+import d2lzh as d2l
+from mxnet import contrib, gluon, image, nd
+import numpy as np
+np.set_printoptions(2)
+#+END_SRC
+
+** 生成多个锚框
+
+- 假设输入图像高为 $h$, 宽为 $w$, 分别以图像的每个像素为中心生成不同形状的锚框。
+- 假设大小为 $s\in (0, 1]$ 且宽高比为 $r>0$, 那么锚框的宽和高将分别为
+  $ws\sqrt{r}$, 和 $hs/\sqrt{r}$
+- 设定一组大小为 $s_1,\ldots,s_n$ 和一组宽高比为 $r_1,\ldots,r_m$
+- 如果以每个像素为中心时使用所有的大小与宽高比的组合，输入图像将得到 $whnm$ 个锚
+  框，计算量太大
+- 通常只考虑包含 $s_1$ 或 $r_1$ 的大小与宽高比的组合，即
+  \begin{equation}
+    (s_1, r_1), (s_1, r_2), \ldots, (s_1, r_m), (s_2, r_1), (s_3, r_1), \ldots, (s_n, r_1)
+  \end{equation}
+- 这样，以相同像素为中心的锚框数量为 $n+m-1$, 对于整个输入图像，一共将生成
+  $wh(n+m-1)$ 个锚框。
+- *锚框的生成方法在 =MultiBoxPrior= 已实现，指定输入、一组大小和一组宽高比，该函
+  数将返回输入的所有锚框*
+  #+BEGIN_SRC python
+img = image.imread("img/catdog.jpg").asnumpy()
+h, w = img.shape[0:2]
+
+print(h, w)
+X = nd.random.uniform(shape=(1, 3, h, w)) # 构造输入数据
+Y = contrib.nd.MultiBoxPrior(X, size=[0.75, 0.5, 0.25], ratios=[1, 2, 0.5])
+Y.shape
+  #+END_SRC
+
+  #+RESULTS:
+  : 561 728
+  : (1, 2042040, 4)
+
+- 返回锚框变量 $y$ 的形状为 (批量大小 x 锚框个数 x 4), 这里的 $4$ 指的是锚框的左
+  上和右下坐标值
+- 将锚框变量 $y$ 的形状变为 (图像高 x 图像宽 x 以相同元素为中心的锚框个数 x 4),
+  以相同元素为中心的锚框数目为 $3+3-1=5$.
+  #+BEGIN_SRC python
+boxes = Y.reshape((h, w, 5, 4))
+boxes[250, 250, 0, :]
+  #+END_SRC
+
+  #+RESULTS:
+  : [0.06 0.07 0.63 0.82]
+  : <NDArray 4 @cpu(0)>
+- 为了描绘图像中以某个像素为中心的所有锚框，定义 =show_bboxes= 函数以便在图像中
+  画出多个边界框
+  #+BEGIN_SRC python
+def show_bboxes(axes, bboxes, labels=None, colors=None):
+    def _make_list(obj, default_values=None):
+        if obj is None:
+            obj = default_values
+        elif not isinstance(obj, (list, tuple)):
+            obj = [obj]
+
+    labels = _make_list(labels)
+    colors = _make_list(colors, ['b', 'g', 'r', 'm', 'c'])
+    for i, bbox in enumerate(bboxes):
+        color = colors[i%len(colors)]
+        rect = d2l.bbox_to_rect(bbox.asnumpy(), color)
+        axes.add_patch(rect)
+        if labels and len(labels) > i:
+            text_color = 'k' if color == 'w' else 'w'
+            axes.text(rect.xy[0], rect.xy[1], labels[i],
+                      va='center', ha='center', fontsize=9, color=text_color,
+                      bbox=dict(facecolor=color, lw=0))
+
+  #+END_SRC
+
+- 变量 =boxex= 中 x 和 y 轴坐标值分别已除以图像的宽和高，绘图时，需要恢复锚框的
+  原始坐标值，定义变量 =bbox_scale=, 画出图像中以 $(250, 250)$ 为中心的所有锚框
+  #+BEGIN_SRC python
+d2l.set_figsize()
+bbox_scale = nd.array((w, h, w, h))
+fig = d2l.plt.imshow(img)
+show_bboxes(fig.axes, boxes[250, 250, :, :] * bbox_scale,
+            ['s=0.75, r=1', 's=0.5, r=1', 's=0.25, r=1', 's=0.75, r=2',
+            's=0.75, r=0.5'])
+  #+END_SRC
+
+  [[file:img/chapter_computer-vision_anchor_9_0.svg]]
+
+** 交并比
+
+1. 给定集合 A 和 集合 B, Jaccard 系数 (~Jaccard index~) 定义为
+   \begin{equation}
+     J(\mathcal{A}, \mathcal{B}) = \frac{\left|\mathcal{A}\cap\mathcal{B}\right|}
+                                   {\left|\mathcal{A}\cup\mathcal{B}\right|}.
+   \end{equation}
+2. 将边界框内的像素区域看成像素的集合，可以用两个边界框的像素集合的 Jaccard
+   系数衡量两个边界框的相似度，当衡量两个边界框的相似度时，通常将 Jaccard 系数称
+   为交并比 (~intersection over union, IoU~), 即两个边界框相交面积与相并面积之比
+   [[file:img/iou.svg]]
+
+** 标注训练集的锚框
+
+1. 在训练集中，我们将每个锚框视为一个训练样本，每个锚框标注两类标签：
+   - 锚框所含目标的类别
+   - 真实边界框相对锚框的偏移量 (~offset~)
+2. 目标检测时，首先生成多个锚框，然后为每个锚框预测类别以及偏移量，接着根据预测
+   的偏移量调整锚框位置从而得到预测边界框，最后筛选需要输出的预测边界框
+3. 为锚框分配真实边界框
+   - 假设图像中锚框分别为 $A_1, A_2, \ldots, A_{n_a}$, 真实边界框分别为 $B_1, B_2,
+     \ldots, B_{n_b}$, 且 $n_a\geq n_b$. 定义矩阵 $X\in\mathbb{R}^{n_a\times n_b}$,
+     其中，第 $i$ 行第 $j$ 列元素 $x_{ij}$ 为锚框 $A_i$ 与真实边界框 $B_j$ 的交并
+     比。
+   - 找出矩阵 $X$ 中最大元素，并将该元素的行索引与列索引分别记为 $i_1, j_1$, 为
+     锚框 $A_{i_1}$ 分配真实边界框 $B_{j_1}$, 然后将矩阵 $X$ 中第 $i_1$ 行,
+     $j_1$ 列元素全部丢弃
+   - 在矩阵 $X$ 剩余元素中找到最大元素 $i_2, j_2$, 为锚框$A_{i_2}$ 分配真实边界
+     框 $B_{j_2}$, 然后将矩阵 $X$ 中第 $i_2$ 行, $j_2$ 列元素全部丢弃
+   - 依次类推，直至矩阵 $X$ 中所有的 $n_b$ 列全部丢弃
+   - 遍历剩余的 $n_a - n_b$ 个锚框：给定其中锚框 $A_i$, 根据矩阵 $X$ 的第 $i$ 行
+     找到与 $A_i$ 交并比最大的真实边界框 $B_j$, 且只有当该交并比大于预先设定的阈
+     值时，才为锚框 $A_i$ 分配真实边界框 $B_j$
+4. 标注锚框类别和偏移量
+   - 如果一个锚框 $A$ 被分配了真实边界框 $B$, 将锚框 $A$ 的类别设为 $B$ 的类别，
+     并根据 $B$ 和 $A$ 的中心坐标相对位置以及两个框的相对大小为锚框 $A$ 标注偏移
+     量
+   - 由于数据集中各个框位置和大小各异，因此这些相对位置和相对大小需要一些特殊变
+     换
+   - 设锚框 $A$ 及其被分配的真实边界框 $B$ 的中心坐标分别为 $(x_a, y_a)$ 和
+     $(x_b, y_b)$, $A$ 和 $B$ 的宽分别为 $w_a$ 和 $w_b$, 高分别为 $h_a$ 和
+     $h_b$, 一个常用技巧是将 $A$ 的偏移量标注为
+     \begin{equation}
+       \left(\frac{\frac{x_b-x_a}{w_a}-\mu_x}{\sigma_x},
+                   \frac{\frac{y_b-y_a}{h_a}-\mu_y}{\sigma_y},
+                   \frac{\log\frac{w_b}{w_a}-\mu_w}{\sigma_w},
+                   \frac{\log\frac{h_b}{h_a}-\mu_h}{\sigma_h}\right)
+     \end{equation}
+     其中，常数的默认值为 $\mu_x=\mu_y=\mu_w=\mu_h=0, \sigma_x=\sigma_y=0.1, \sigma_w=\sigma_h=0.2$.
+5. 实例
+   #+BEGIN_QUOTE
+   为读取的图像中的猫和狗定义真实边界框，其中第一个元素为类别 (0 为狗， 1 为猫),
+   剩余 4 个元素分别为左上角的 $x$ 轴和 $y$ 轴坐标以及右下角的 $x$ 轴和 $y$ 轴坐
+   标 (值域在 0 到 1 之间). 通过左上角与右下角坐标构造 5 个需要标注的锚框，分别
+   记为 $A_0,\ldots,A_4$.
+   #+END_QUOTE
+
+   - 画出这些锚框与真实边界框在图像中位置
+     #+BEGIN_SRC python
+ground_truth = nd.array([[0, 0.1, 0.08, 0.52, 0.92],
+                        [1, 0.55, 0.2, 0.9, 0.88]])
+anchors = nd.array([[0, 0.1, 0.2, 0.3], [0.15, 0.2, 0.4, 0.4],
+                    [0.63, 0.05, 0.88, 0.98], [0.66, 0.45, 0.8, 0.8],
+                    [0.57, 0.3, 0.92, 0.9]])
+
+fig = d2l.plt.imshow(img)
+show_bboxes(fig.axes, ground_truth[:, 1:]*bbox_scale, ["dog", "cat"], "k")
+show_bboxes(fig.axes, anchors*bbox_scale, ['0', '1', '2', '3', '4']);
+     #+END_SRC
+   - 通过 =contrib.nd= 模块中的 =MultiBoxTarget= 函数为锚框标注类别和偏移量，该
+     函数将背景类别标注为 0，并令从零开始的类别的整数索引自加 1 (1 为狗，2为猫).
+     通过 =expand_dims= 函数为锚框和真实边界框添加样本维，并构造形状为 (批量大小
+     x 包括背景类别个数 x 锚框数) 的任意预测结果
+     #+BEGIN_SRC python
+labels = contrib.nd.MultiBoxTarget(anchors.expand_dims(axis=0),
+                                   ground_truth.expand_dims(axis=1),
+                                   nd.zeros((1, 3, 5)))
+     #+END_SRC
+
+   - 返回的结果里有 3 项，第三项为锚框标注的类别
+     #+BEGIN_SRC python
+labels[2]
+     #+END_SRC
+
+     #+RESULTS:
+     : [[0. 1. 2. 0. 2.]]
+     : <NDArray 1x5 @cpu(0)>
+
+   - 返回结果第二项为掩码 (~mask~) 变量，形状为 (批量大小 x 锚框个数的四倍), 掩
+     码变量中的元素与每个锚框的 4 个偏移量一一对应
+   - 返回的第一项是为每个锚框标注的四个偏移量，其中负类锚框的偏移量标注为 0
+
+** 输出预测边界框
+
+#+BEGIN_QUOTE
+模型预测阶段，我们先为图像生成多个锚框，并为这些锚框一一预测类别和偏移量，随后，
+根据锚框及其预测偏移量得到预测边界框。当锚框数量较多时，同一目标可能输出许多相似
+预测边界框，为了使结果简洁，可以用 *非极大值抑制* (~non-maximum suppression
+NMS~) 移除相似的预测边界框。
+#+END_QUOTE
+
+#+BEGIN_QUOTE
+非极大值抑制工作原理：对于一个预测边界框 $B$, 模型计算各个类别的预测概率，设其中
+最大的预测概率为 $p$, 该概率对应的类别即 $B$ 的预测类别。 $p$ 也被称为边界框 $B$
+的置信度。在同一图像上，将预测类别非背景的预测边界框按置信度从高到低排序，得到列
+表 $L$. 从 $L$ 中选取置信度最高的预测边界框 $B_1$ 作为基准，将所有与 $B_1$ 交并
+比大于某阈值的非基准预测边界框从 $L$ 移除。这里的阈值是提前设好的超参数，然后从
+$L$ 中选取置信度第二高的预测边界框 $B_2$ 作为基准，将所有与 $B_2$ 交并比超过阈值
+的非基准边界框移除。重复过程，直至 $L$ 中所有的预测边界框都是基准。
+#+END_QUOTE
+* 多尺度目标检测
+
+#+BEGIN_QUOTE
+对输入图像的每个像素中心都生成锚框，很容易生成过多锚框而造成计算量过大。一个简单
+的方法是在输入图像中均匀采样一小部分像素，并以采样的像素为中心生成锚框；此外，不
+同尺度下，可以生成不同数量和不同大小的锚框。由于较小目标在图像中相比较大目标出现
+的位置可能性更多，因此，当使用较小锚框检测较小目标时，可以采样较多区域，使用较大
+锚框检验较大目标时，可以采样较少区域。
+#+END_QUOTE
+
+1. 读取图像
+
+   #+BEGIN_SRC python
+import d2lzh as d2l
+from mxnet import contrib, image, nd
+
+img = image.imread("img/catdog.jpg")
+h, w = img.shape[0:2]
+h, w
+   #+END_SRC
+
+   #+RESULTS:
+   : (561, 728)
+
+2. 定义特征图的形状来确定任一图像上均匀采样的锚框中心
+
+   - 定义 =display_anchors= 函数
+     #+BEGIN_QUOTE
+     在特征图 =fmap= 上以每个单元 (像素) 为中心生成锚框 =anchors=. 由于锚框
+     =anchors= 中 x 轴和 y 轴坐标值分别已经除以特征图 =fmap= 宽和高，这些值域在
+     0 和 1 之间的值表达了锚框在特征图中的相对位置。由于锚框 =anchors= 的中心遍
+     布特征图 =fmap= 上的所有单元， =anchors= 的中心在任一图像的空间相对位置一定
+     是均匀分布的，具体而言，当特征图的宽和高分别设为 =fmap_w= 和 =fmap_h= 时，
+     该函数的任一图像上均匀采样 =fmap_h= 行 =fmap_w= 列个像素，并分别以它们为中
+     心生成大小为 =s= (假设列表 =s= 长度为 1) 的不同宽高比 (=ratios=) 的锚框
+     #+END_QUOTE
+
+     #+BEGIN_SRC python
+d2l.set_figsize()
+
+def display_anchors(fmap_w, fmap_h, s):
+    fmap = nd.zeros((1, 10, fmap_w, fmap_h))
+    anchors = contrib.nd.MultiBoxPrior(fmap, sizes=s, ratios=[1, 2, 0.5])
+    bbox_scale = nd.array((w, h, w, h))
+    d2l.show_bboxes(d2l.plt.imshow(img.asnumpy()).axes,
+                    anchors[0]*bbox_scale)
+     #+END_SRC
+
+   - 关注小目标检测，为了在显示时更容易分辨，这里令不同中心的锚框不重合
+
+     #+BEGIN_SRC python
+display_anchors(fmap_w=4, fmap_h=4, s=[0.15])
+     #+END_SRC
+
+     #+CAPTION: 设锚框大小为 0.15, 特征图上的高和宽分别为 4，图像上 4 行 4 列锚框中心分布均匀
+     [[file:img/chapter_computer-vision_multiscale-object-detection_5_0.svg]]
+
+   - 将特征图高宽减半，用更大的锚框检测更大目标
+
+     #+BEGIN_SRC python
+display_anchors(fmap_w=2, fmap_h=2, s=[0.4])
+     #+END_SRC
+
+     #+CAPTION: 设锚框大小为 0.4, 特征图上的高和宽减半
+     [[file:img/chapter_computer-vision_multiscale-object-detection_7_0.svg]]
+
+   - 将特征图高宽进一步减半至 1，并将锚框大小增至 0.8
+
+     #+BEGIN_SRC python
+display_anchors(fmap_w=2, fmap_h=2, s=[0.4])
+     #+END_SRC
+
+     #+CAPTION: 设锚框大小为 0.4, 特征图上的高和宽减半
+     [[file:img/chapter_computer-vision_multiscale-object-detection_9_0.svg]]
+
+3. 在不同尺度下检测不同大小的目标
+
+   #+BEGIN_QUOTE
+   基于卷积神经网络的方法：在某个尺度下，我们依据 $c_i$ 张形状为 $h\times w$ 组
+   不同的特征图生成 $h\times w$ 组不同中心的锚框，且每组锚框个数为 $a$. 接下来，
+   根据真实边界框的类别和位置，每个锚框将被标注类别和偏移量。在当前尺度下，目标
+   检测模型需要根据输入图像预测 $h\times w$ 组不同中心的锚框的类别和偏移量。在当
+   前尺度下，目标检测模型需要根据图像预测 $h\times w$ 组不同中心的锚框的类别和偏
+   移量。
+
+   假设这里的 $c_i$ 张特征图为卷积神经网络根据输入图像做前向计算所得的中间输出，
+   既然每张特征图上都有 $h\times w$ 个不同的空间位置，那么相同的空间位置可以看做
+   含有 $c_i$ 个单元。根据感受野的定义，特征图在相同空间位置的 $c_i$ 个单元在相
+   同空间位置的 $c_i$ 个单元在输入图像上的感受野相同，并表征了同一感受野的输入图
+   像信息。因此，我们可以将特征图在相同空间位置的 $c_i$ 个单元变换为以该位置为中
+   心生成的 $a$ 个锚框的类别和偏移量。不难发现，本质上，我们用输入图像在某个感受
+   野区域内的信息来预测输入输入图像上与该区域位置相近的锚框的类别和偏移量。
+
+   当不同层的特征图在输入图像上分别拥有不同大小的感受野时，它们将分别用来检测不
+   同大小的目标。例如，我们可以通过设计网络，令较接近输出层的特征图中每个单元拥
+   有更广阔的感受野，从而检测输入图像中更大尺寸的目标。
+   #+END_QUOTE
+* 目标检测数据集 (皮卡丘)
+
+#+BEGIN_QUOTE
+案例描述：
+- 使用一个开源的皮卡丘 3D 模型生成 1000 张不同角度和大小的皮卡丘图像。
+- 收集一系列背景图像，并在每张图的随机位置放置一张随机的皮卡丘图像
+- 使用 =MXNet= 提供的 =im2rec= 工具将图像转换为二进制的 RecordIO 格式
+(=RecordIO= 格式既可以降低数据集在磁盘上的存储开销，又可以提高读取效率)
+#+END_QUOTE
+
+** 下载数据集
+
+#+BEGIN_SRC python
+import d2lzh as d2l
+from mxnet import gluon, image
+from mxnet.gluon import utils as gutils
+import os
+
+def _download_pikachu(data_dir):
+    root_url = ("https://apache-mxnet.s3-accelerate.amazonaws.com/",
+                "gluon/dataset/pikichu/")
+    dataset = {'train.rec': 'e6bcb6ffba1ac04ff8a9b1115e650af56ee969c8',
+               'train.idx': 'dcf7318b2602c06428b9988470c731621716c393',
+               'val.rec': 'd6c33f799b4d058e82f2cb5bd9a976f69d72d520'}
+    for k, v in dataset.items():
+        gutils.download(root_url+k, os.path.join(data_dir, k), sha1_hash=v)
+#+END_SRC
+
+** 读取数据集
+
+- 使用 =ImageDetIter= 实例来读取检测数据集
+- 以随机顺序读取训练数据集，由于数据集格式为 =RecordIO=, 需要提供索引文件
+  =train.idx= 以随机读取小批量
+- 对于训练集中的每张图像，采用随机裁剪，并要求裁剪出的图像至少覆盖每个目标 95%
+  的区域，由于需求不一定总是满足，设定最多 200 次尝试
+  #+BEGIN_SRC python
+def load_data_pikachu(batch_size, edge_size=256): # edge_size: 输出图像宽和高
+    data_dir = "../data/pikachu"
+    _download_pikachu(data_dir)
+    train_iter = image.ImageDetIter(
+        path_imgrec=os.path.join(data_dir, "train.rec"),
+        path_imgidx=os.path.join(data_dir, "train.idx"),
+        batch_size=batch_size,
+        data_shape=(3, edge_size, edge_size) # 输出图像形状
+        shuffle=True, # 随机读取
+        rand_crop=1, # 随机裁剪概率为 1
+        min_object_covered=0.95,
+        max_attempts=200
+    )
+    val_iter = image.ImageDetIter(
+        path_imgrec=os.path.join(data_dir, "val.rec"),
+        batch_size=batch_size,
+        data_shape=(3, edge_size, edge_size),
+        shuffle=False
+    )
+    return train_iter, val_iter
+  #+END_SRC
+- 读取小批量并打印图像和标签形状
+
+  #+BEGIN_SRC python
+batch_size, edge_size=32, 256
+train_iter, _ = load_data_pikachu(batch_size, edge_size)
+batch = train_iter.next()
+batch.data[0].shape, batch.label[0].shape
+  #+END_SRC
+
+** 图示数据
+
+#+BEGIN_SRC python
+imgs = (batch.data[0][0:10].transpose((0, 2, 3, 1))) / 255
+axes = d2l.show_images(img, 2, 5).flatten()
+for ax, label in zip(axes, batch.label[0][0:10]):
+    d2l.show_bboxes(ax, [label[0][1:5] * edge_size], colors=['w'])
+#+END_SRC
+* 单发多框检测 (SSD)
+
+** 模型
+
+- 由一个基础网络块和若干个多尺度特征块串联而成
+- 基础网络块用来从原始图像中抽取特征，一般选择常用的深度卷积神经网络
+- 基础网络的输出的高和宽可以设计的较大，这样，基于该特征图生成的锚框数量较多，可
+  以用于检测较小的目标
+- 接下来的每个多尺度特征块将上一层提供的特征图的高和宽缩小，并使特征图中每个单元
+  在输入图像上的感受野变得更广阔
+- 在下图中，越靠近顶层的多尺度特征块输出的特征图越小，故而基于特征图生成的锚框也
+  越少，加之特征图中的每个单元感受野越大，因此更适合检测尺寸较大的目标
+- 由于单发多框检测基于基础网络块和多个多尺度特征块生成不同数量和不同大小的锚框，
+  并通过预测锚框的类别和偏移量 (即预测边界框) 检测不同大小的目标，因此，单发多框
+  检测是一个多尺度的目标检测模型。
+
+  [[file:img/ssd.svg]]
+
+*** 类别预测层
+
+ - 单发多框检测采用卷积层的通道来输出类别预测，以此减少模型参数
+ - 类别预测层使用一个保持输入高和宽的检测层
+   #+BEGIN_QUOTE
+   考虑输出和输入同一空间坐标 $(x,y)$: 输出特征图 $(x,y)$ 坐标的通道里包含了以输
+   入特征图 $(x,y)$ 坐标为中心生成的所有锚框的类别预测。因此，输出通道数为
+   $a(q+1)$, 其中索引为 $i(q+1)+j (0\leq j \leq q)$ 的通道代表了索引为 $i$ 的锚
+   框有关类别索引为 $j$ 的预测。
+   #+END_QUOTE
+- 定义类别预测层
+  #+BEGIN_SRC python
+from d2lzh as d2l
+from mxnet import autograd, contrib, gluon, image, init, nd
+from mxnet.gluon import loss as gloss, nn
+import time
+
+def cls_predictor(num_anchors, num_classes):
+    return nn.Conv2D(num_anchors*(num_classes+1), kernel_size=3, padding=1)
+  #+END_SRC
+
+*** 边界框预测层
+
+- 边界框预测层的设计与类别预测层设计类似，唯一不同是，这里需要为每个锚框预测 4
+  个偏移量，而非 $q+1$ 个类别
+
+  #+BEGIN_SRC python
+def bbox_prediction(num_anchors):
+    return nn.Conv2D(num_anchors*4, kernel_size=3, padding=1)
+  #+END_SRC
+
+*** 连接多尺度的预测
+
+- 单发多框检测根据多个尺度下的特征图生成锚框并预测类别和偏移量
+- 每个尺度特征图形状或以同一单元为中心生成的锚框个数可能不同，因此，不同尺度的预
+  测输出形状可能不同
+- 通道维包含中心相同的锚框预测结果
+- 将通道维移到最后一维，因为不同尺度下批量大小保持不变，可以将预测结果转变为二维
+  的 (批量大小, 高 x 宽 x 通道数) 的格式，方便在维度 1 上连接
+  #+BEGIN_SRC python
+def flatten_pred(pred):
+    return pred.transpose((0, 2, 3, 1)).flatten()
+
+def concat_preds(preds):
+    return nd.concat(*[flatten_pred(p) for p in preds])
+  #+END_SRC
+
+*** 高和宽减半
+
+- 定义高和宽减半的函数 =down_sample_blk=
+- 函数串联两个填充为 1 的 $3\times 3$ 卷积层和步幅为 2 的 $2\times 2$ 的最大池化
+  层
+- 填充为 1 的 $3\times 3$ 卷积层不改变特征图的形状，池化层直接将特征图的高宽减半
+- 输出特征图的每个单元在输入特征图上的感受野形状为 $6\times 6$
+- 高和宽减半使得输出特征图中每个单元的感受野变得更为广阔
+  #+BEGIN_SRC python
+def down_sample_blk(num_channels):
+    blk = nn.Sequential()
+    for _ in range(2):
+        blk.add(nn.Conv2D(num_channels, kernel_size=3, padding=1),
+                nn.BatchNorm(in_channels=num_channels),
+                nn.Activation("relu"))
+    blk.add(nn.MaxPool2D(2))
+    return blk
+  #+END_SRC
+
+*** 基础网络块
+
+- 基础网络块用于从原始图像中抽取特征
+- 计算简洁起见，构造一个小的基础网络，网络串联 3 个高和宽减半
+- 逐步将通道数翻倍
+  #+BEGIN_SRC python
+def base_net():
+    blk = nn.Sequential()
+    for num_filters in [16, 32, 64]:
+        blk.add(down_sample_blk(num_filters))
+    return blk
+  #+END_SRC
+
+*** 完整模型
+
+- 单发多框检测模型一共包含 5 个模块
+- 每个模块输出的特征图既用来生成锚框，又用来预测这些锚框类别和偏移量
+- 第一模块为基础网络块
+- 第二至第四模块为高和宽减半
+- 第五模块使用全局最大池化层将高宽降到 1
+  #+BEGIN_SRC python
+def get_blk(i):
+    if i == 0:
+        blk = base_net()
+    elif i == 4:
+        blk = nn.GlobalMaxPool2D()
+    else:
+        blk = down_sample_blk(128)
+    return blk
+  #+END_SRC
+- 定义每个模块前向计算，每个模块前向计算不仅返回卷积计算输出的特征图 $Y$, 还返回
+  $Y$ 生成的当前尺度的锚框，以及基于 $Y$ 预测的锚框类别和偏移量
+  #+BEGIN_SRC python
+def blk_forward(X, blk, size, ratio, cls_predictor, bbox_predictor):
+    Y = blk(X)
+    anchors = nd.contrib.MultiBoxPrior(Y, sizes=size, ratios=ratio)
+    cls_preds = cls_predictor(Y)
+    bbox_preds = bbox_predictor(Y)
+    return (Y, anchors, cls_preds, bbox_preds)
+  #+END_SRC
+- 多尺度特征块用于检测尺度较大的目标，因此需要生成较大的锚框，而且越往上，锚框越
+  大，这里将 0.2 到 1.05 均等分为 5 份，以确定不同尺寸下锚框大小的较小值 0.2,
+  0.37, 0.54 等，再按 $\sqrt{0.2\times 0.37}=0.272$, $\sqrt{0.37\times 0.54} =
+  0.447$ 等来确定不同尺度下锚框大小的较大值
+  #+BEGIN_SRC python
+sizes = [[0.2, 0.272], [0.37, 0.447], [0.54, 0.619], [0.71, 0.79], [0.88, 0.961]]
+ratios = [[1, 2, 0.5]] * 5
+num_anchors = len(sizes[0]) + len(ratios[0]) - 1
+  #+END_SRC
+- 完整的模型 =TinySSD=
+  #+BEGIN_SRC python
+class TinySSD(nn.Block):
+    def __init__(self, num_classes, **kwargs):
+        super(TinySSD, self).__init__(**kwargs)
+        self.num_classes = num_classes
+        for i in range(5):
+            setattr(self, "blk_{}".format(i), get_blk(i))
+            setattr(self, "cls_{}".format(i), cls_predictor(num_anchors, num_classes))
+            setattr(self, "bbox_{}".format(i), bbox_predictor(num_anchors))
+
+    def forward(self, X):
+        anchors, cls_preds, bbox_preds = [None] * 5, [None] * 5, [None] * 5
+        for i in range(5):
+            X, anchors[i], cls_preds[i], bbox_preds[i] = blk_forward(
+                X,
+                getattr(self, "blk_{}".format(i)),
+                sizes[i],
+                ratios[i],
+                getattr(self, "cls_{}".format(i)),
+                getattr(self, "bbox_{}".format(i))
+            )
+        return (nd.concat(*anchors, dim=1),
+           concat_preds(cls_preds).reshape((0, -1, self.num_classes+1)),
+           concat_preds(bbox_preds))
+
+  #+END_SRC
+
+** 训练模型
+
+*** 读取数据集和初始化
+
+#+BEGIN_SRC python
+batch_size = 32
+train_iter, _ = d2l.load_data_pikachu(batch_size)
+
+ctx, net = d2l.try_gpu(), TinySSD(num_classes=1)
+net.initialize(init.Xavier(), ctx=ctx)
+trainer = gluon.Trainer(
+    net.collect_params(),
+    'sgd',
+    {'learning_rate': 0.2,
+     "wd": 5e-4})
+#+END_SRC
+
+*** 定义损失函数和评价函数
+
+- 有关锚框类别损失: 交叉熵损失函数
+- 正类锚框偏移量的损失: $L_1$ 范数损失，即预测值与真实值之间差的绝对值
+- 掩码变量 =bbox_masks= 令负类锚框和填充锚框不参与损失的计算
+- 将锚框类别和偏移量损失的相加得到模型最终损失函数
+  #+BEGIN_SRC python
+cls_loss = gloss.SoftmaxCrossEntropyLoss()
+bbox_loss = gloss.L1Loss()
+
+def calc_loss(cls_preds, cls_labels, bbox_preds, bbox_labels, bbox_masks):
+    cls = cls_loss(cls_preds, cls_labels)
+    bbox = bbox_loss(bbox_preds*bbox_masks, bbox_labels*bbox_masks)
+    return cls+bbox
+  #+END_SRC
+- 沿用准确率评价分类结果，因为使用了 $L_1$ 范数损失，用平均绝对误差评价边界框的
+  预测结果
+  #+BEGIN_SRC python
+def cls_eval(cls_preds, cls_labels):
+    return (cls_preds.argmax(axis=-1) == cls_labels).sum().asscalar()
+
+def bbox_eval(bbox_preds, bbox_labels, bbox_masks):
+    return ((bbox_labels - bbox_preds) * bbox_masks).abs().sum().asscalar()
+  #+END_SRC
+
+*** 训练模型
+
+- 在模型前向计算过程中生成多尺度的锚框 =anchors=
+- 为每个锚框预测类别 =cls_preds= 和偏移量 =bbox_preds=
+- 根据标签信息 =Y= 为生成的每个锚框标注类别 =cls_labels= 和偏移量 =bbox_labels=
+- 根据类别和偏移量的预测和标注值计算损失函数
+  #+BEGIN_SRC python
+for epoch in range(20):
+    acc_sum, mae_sum, n, m = 0., 0. 0, 0
+    train_iter.reset()
+    start = time.time()
+    for batch in train_iter:
+        X = batch.data[0].as_in_context(ctx)
+        Y = batch.label[0].as_in_context(ctx)
+        with autograd.record():
+            anchors, cls_preds, bbox_preds = net(X)
+            bbox_labels, bbox_masks, cls_labels = nd.contrib.MultiBoxTarget(
+                anchors, Y, cls_preds.transpose((0, 2, 1))
+            )
+            l = calc_loss(cls_preds, cls_labels, bbox_preds, bbox_labels, bbox_masks)
+        l.backward()
+        trainer.step(batch_size)
+        acc_sum += cls_eval(cls_preds, cls_labels)
+        n += cls_labels.size
+        mae_sum += bbox_eval(bbox_preds, bbox_labels, bbox_masks)
+        m += bbox_label.size
+
+        if (epoch+1)%5 == 0:
+            print(f"epoch {epoch+1:.2f}, class err {(1-acc_sum/n):.2f}",
+                  "bbox mae {mae_sum/m:.2f}, time {(time.time()-start):.1f}")
+  #+END_SRC
+** 预测结果
+
+#+BEGIN_SRC python
+img = image.imread("img/pikachu.jpg")
+feature = image.imresize(img, 256, 256).astype("float32")
+X = feature.transpose((2, 0, 1)).expand_dims(axis=0)
+
+def predict(X):
+    anchors, cls_preds, bbox_preds = net(X.as_in_context(ctx))
+    cls_probs = cls_preds.softmax().transpose((0, 2, 1))
+    output = nd.contrib.MultiBoxDection(cls_preds, bbox_preds, anchors)
+    idx = [i for i, row in enumerate(output[0]) if row[0].asscalar() != -1]
+    return output[0, idx]
+
+output = predict(X)
+#+END_SRC
+* 区域卷积神经网络 (R-CNN) 系列
+
+** R-CNN
+
+#+BEGIN_QUOTE
+R-CNN 首先对图像选取若干提议区域 (如锚框也是一种选取方法) 并标注它们的类别和边界
+框 (如偏移量)。然后，用卷积神经网络对每个提议区域做前向计算抽取特征。之后，我们
+用每个提议区域的特征预测类别和边界框。
+#+END_QUOTE
+
+[[file:img/r-cnn.svg]]
+
+1. 对输入图像使用选择性搜索 (selective search) 来选取多个高质量的提议区域。这些
+   提议区域通常是在多个尺度下选取的，并具有不同的形状和大小。每个提议区域将被标
+   注类别和真实边界框。
+2. 选取一个预训练的卷积神经网络，并将其在输出层之前截断。将每个提议区域变形为网
+   络需要的输入尺寸，并通过前向计算计算抽取的提议区域特征。
+3. 将每个提议区域的特征连同其标注的类别作为一个样本，训练多个支持向量机 对目标分
+   类。其中每个支持向量机用来判断样本是否属于某一类别。
+4. 将每个提议区域的特征连同其标注的边界框作为一个样本，训练线性回归模型来预测真
+   实边界框。
+   
+** Fast R-CNN
+
+   #+BEGIN_QUOTE
+   R-CNN 主要性能瓶颈在于需要对每个提议区域独立抽取特征，由于这些区域通常有大量重叠，独立的
+   特征抽取会导致大量重复计算。 Fast R-CNN 对 R-CNN 的一个主要改进在于只对整个图像做卷积
+   神经网络的前向计算。
+   #+END_QUOTE
+   
+   [[file:img/fast-rcnn.svg]]
+   
+   1. Fast R-CNN 输入整张图像，而非各个提议区域，而且整个网络通常会参与训练，即更新模型参数，
+      设输入为一张图像，将整个卷积神经网络的输出形状记为 $1\times c\times h_1 \times w_1$.
+   2. 假设选择性搜索生成 $n$ 个提议区域，这些形状各异的提议区域在卷积神经网络的输出上分别标出
+      形状各异的兴趣区域。这些兴趣区域需要抽取出形状相同的特征 (假设高和宽均分别指定为 $h_2$
+      和 $w_2$) 以便于连接后输出。 Fast R-CNN 引入兴趣区域池化 (region of interest pooling,
+      Rol 池化) 层，将卷积神经网络的输出和提议区域作为输入，输出连接后的各个提议区域抽取的特征，
+      形状为 $n\times c\times h_2 \times w_2$.
+   3. 通过全连接层将输出形状变换为 $n\times d$, 其中超参数 $d$ 取决于模型设计
+   4. 预测类别时，将全连接层的输出的形状再变换为 $n\times q$ 并使用 softmax 回归。预测边界
+      框时，将全连接层的输出的形状变换为 $n\times 4$. 也就是说，我们为每个提议区域预测类别
+      和边界框。
+      
+*** 兴趣区域池化层
+
+    1. 兴趣区域池化层对每个区域的输出形状可以直接指定
+    2. 指定每个区域输出高和宽分别为 $h_2$ 和 $w_2$, 假设某一兴趣区域窗口的高和宽分别为 $h$
+       和 $w$, 该窗口将被划分为形状为 $h_2\times w_2$ 的子窗口网格，且每个子窗口大小大约为
+       $(h/h_2) \times (w/w_2)$. 任一子窗口的高和宽要取整，其中最大的元素作为该子窗口的输出。
+    3. 下图中，在 $4\times 4$ 输入上选组左上角 $3\times 3$ 作为兴趣区域，通过 $2\times 2$
+       兴趣区域池化层得到一个 $2\times 2$ 的输出。 4 个划分后的子窗口分别含有元素 0,1,4,5 (5 最大),
+       2, 6 (6 最大)， 8, 9 (9 最大), 10.
+       
+    [[file:img/roi.svg]]
+    
+** Faster R-CNN
+
+   [[file:img/faster-rcnn.svg]]
+   
+** Mask R-CNN
+
+   [[file:img/mask-rcnn.svg]]
+* 语义分割和数据集
+
+[[file:img/segmentation.svg]]
+
+** 图像分割和实例分割
+
+   - 图像分割: 将图像分割成若干组成区域，这类问题的方法通常利用图像中像素之间的相关性，在训练时不
+     需要有关图像像素的标签信息，在预测时也无法保障分割出的区域具有我们希望得到的语义。以上图为例，
+     图像分割可以将狗分割为两个区域：一个覆盖以黑色为主的嘴巴和眼睛，另一个覆盖以黄色为主的其余部分
+     身体。
+   - 实例分割又叫同时检测并分割 (simultaneous detection and segmentation). 其研究如何识别
+     图像中各个目标实例的像素级区域。与语义分割有所不同，实例分割不仅需要区域语义，还要区分不同的目标
+     实例。如果图像中有两只狗，实例分割需要区分像素属于这两只狗中的哪一只。
+
+** Pascal VOC2012 语义分割数据集
+
+*** 下载数据集 
+    
+    #+BEGIN_SRC python
+      from mxnet import gluon, image, nd
+      from mxnet.gluon import data as gdata, utils as gutils
+      import os
+      import sys
+      import tarfile
+
+      def download_voc_pascal(data_dir="./data"):
+          voc_dir = os.path.join(data_dir, "VOCdevkit/VOC2012")
+          url = ("http://host.robots.ox.ac.uk/pascal/VOC/voc2012"
+                 "/VOCtrainval_11-May-2012.tar")
+          sha1 = '4e443f8a2eca6b1dac8a6c57641b67dd40621a49'
+          fname = gutils.download(url, data_dir, sha1_hash=sha1)
+          with tarfile.open(fname, 'r') as f:
+              f.extractall(data_dir)
+          return voc_dir
+
+
+      voc_dir = download_voc_pascal()
+    #+END_SRC
+    
+*** 数据集描述
+
+    1. './data/VOCdevkit/VOC2012/ImageSets/Segmentation' 包含了指定训练和测试样本的文本文件
+    2. './data/VOCdevkit/VOC2012/JPEGImages' 和 './data/VOCdevkit/VOC2012/SegmentationClass' 路径
+       下分别包含样本的输入图像和标签。
+    3. 将输入图像和标签全部读取内存
+
+       #+BEGIN_SRC python
+         def read_voc_images(root=voc_dir, is_train=True):
+             txt_fname = "{}/ImageSets/Segmentation/{}".format(
+                 root, "train.txt" if is_train else "val.txt")
+             with open(txt_fname, 'r') as f:
+                 images = f.read().split()
+             features, labels = [None] * len(images), [None] * len(images)
+             for i, fname in enumerate(images):
+                 features[i] = image.imread("{}/JPEGImages/{}.jpg".format(root, fname))
+                 labels[i] = image.imread("{}/SegmentationClass/{}.png".format(root, fname))
+             return features, labels
+
+         train_features, train_labels = read_vol_images()
+       #+END_SRC
+    4. 显示图像
+
+       #+BEGIN_SRC python
+         n = 5
+         imgs = train_features[0:n] + train_labels[0:n]
+         d2l.show_images(imgs, 2, n)
+       #+END_SRC

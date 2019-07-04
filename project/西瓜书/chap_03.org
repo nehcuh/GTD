@@ -1,0 +1,148 @@
+#+TITLE: 线性模型
+
+* 基本形式
+
+#+BEGIN_QUOTE
+给定由 $d$ 个属性描述的示例 $\boldsymbol{x}=\left{x_1, x_2, \ldots, x_m\right}$,
+其中 $x_i$ 是 $\boldsymbol{x}$ 在第 $i$ 个属性的取值，线性模型 (~linear model~)
+试图学得一个通过属性的线性组合来进行预测的函数，即
+\begin{equation}
+    f(\boldsymbol) = w_1x_1 + w_2x_2 + \ldots + w_dx_d + b
+\end{equation}
+一般用向量形式写成
+\begin{equation}
+    f(\boldsymbol{x}) = \boldsymbol{w}^T\boldsymbol{x} + b
+\end{equation}
+其中 $\boldsymbol{w}=\left{w_1;w_2;\ldots;w_d\right}$. *$\boldsymbol{w}$ 和 $b$
+学得后，模型就得以确认。*
+#+END_QUOTE
+
+* 线性回归
+#+BEGIN_QUOTE
+给定数据集 $D = \left{(\boldsymbol{x}_1, y_1), \boldsymbol{x}_2, y_2), \ldots,
+\boldsymbol{x}_m, y_m)\right}$, 其中 $\boldsymbol{x}_i = \left{x_{i1}, x_{i2}, \ldots,
+x_{id}\right}, y_i \in \mathbb{R}$. “线性回归” (~linear regression~) 试图学得一
+个线性模型以尽可能准确预测实值输出标志。
+#+END_QUOTE
+
+** 最简单的情形：输入属性的数目只有一个
+
+- 假设输入属性数目只有一个，为便于讨论，忽略属性的下标，即 $D = \left{(x_i,
+  y_i)\right}_{i=1}^m$, 其中 $x_i\in\mathbb{R}$
+- 对离散属性的处理：
+  - 若属性存在 “序” 的关系，可通过连续化将其转换为连续值，譬如 “身高” 的 “高”
+    “矮” 可以转换为 $\left{1.0, 0.0\right}$
+  - 若属性值不存在 “序” 的关系，鉴定有 $k$ 个属性值，譬如 “瓜” 的分类为 “黄瓜”
+    “西瓜” “南瓜”，则可以转化为 $(0, 0, 1), (0, 1, 0), (1, 0, 0)$.
+- 确定 $w, b$, 可以通过衡量回归任务中最常用的性能度量，均方误差
+  \begin{aligned}
+    (w^\ast, b^\ast) &= \arg\max\limits_{(w, b)}\sum\limits_{i=1}^m(f(x_i)-y_i)^2\\
+                     &= \arg\max\limits_{(w, b)}\sum\limits_{i=1}^m(y_i-wx_i-b)^2
+  \end{aligned}
+- 基于均方误差最小化来进行模型求解的方法称为 “最小二乘法” (~least square
+  method~). 线性回归中，最小二乘法就是试图找到一条直线，使得所有样本到直线距离之
+  和最小。
+- 求解 $w$ 和 $b$ 使得 $E(w, b) = \sum\limits_{i=1}^{m}(y_i - wx_i -b)^2$ 最小化
+  过程，称为线性回归模型的最小二乘 “参数估计” (~parameter estimation~)
+  \begin{aligned}
+    \frac{\partial E_{(w, b)}}{\partial w} &= 2\left(w\sum\limits_{i=1}^m x_i^2 - \sum\limits_{i=1}^m (y_i - b)x_i\right) \\
+    \frac{\partial E_{(w, b)}}{\partial b} &= 2\left(mb - \sum\limits_{i=1}^m (y_i - b)\right)
+  \end{aligned}
+- 令上面二式等于 $0$, 解得
+  \begin{aligned}
+    w &= \frac{\sum\limits_{i=1}^{m}y_i(x_i - \bar{x})}{\sum\limits_{i=1}^m x_i^2 - \frac{1}{m}\left(\sum\limits_{i=1}^mx_i\right)^2}\\
+    b &= \frac{1}{m}\sum\limits_{i=1}^{m}(y_i - wx_i)
+  \end{aligned}
+  其中， $\bar{x}=\frac{1}{m}\sum\limits_{i=1}^mx_i$
+ 
+** 多元线性回归 (~multivariate linear regression~)
+
+#+BEGIN_QUOTE
+考虑更一般的情形，样本由 $d$ 个属性描述，此时，我们试图学得 $f(\symbolbold{x}_i)
+= \symbolbold{w}^T\symbolbold{x}_i + b$, 使得 $f(\symbolbold{x}_i)\backsimeq
+y_i$, 这称为多元线性回归。
+#+END_QUOTE
+
+- 为了便于讨论，将 $\symbolbold{w}$ 和 $b$ 吸收入向量形式
+  ${\hat{\symbolbold{w}}; b}$, 相应地，将数据集 $D$ 表示为一个 $m\times(d+1)$ 大
+  小的矩阵，该行前 $d$ 个元素对应于示例的 $d$ 个属性值，最后一个元素恒置为 $1$.
+  \begin{equation}
+  X = \left(
+  \begin{matrix}
+    x_{11} & x_{12} & \ldots & x_{1d} & 1\\
+    x_{21} & x_{22} & \ldots & x_{2d} & 1\\
+    \vdots & \vdots & \ddots & \vdots & \vdots \\
+    x_{m1} & x_{m2} & \ldots & x_{md} & 1\\
+  \end{matrix}
+  \right) = \left(
+  \begin{matrix}
+    \symbolbold{x}_{1}^T & 1\\
+    \symbolbold{x}_{2}^T & 1\\
+    \vdots & \vdots\\
+    \symbolbold{x}_m^T & 1\\
+  \end{matrix}
+  \right)
+  \end{equation}
+- 将标记也写成向量形式 $\symbolbold{y} = (y_1; y_2; \ldots, y_m)$, 则有
+  \begin{equation}
+    \hat{\symbolbold{w}}^\ast = \arg\min\limits_{\hat{\symbolbold{w}}}(\symbolbold{y}-X\hat{\symbolbold{w}})^T(\symbolbold{y}-X\hat{\symbolbold{w}})
+  \end{equation}
+- 令 $E_{\hat{\symbolbold{w}}} =
+  (\symbolbold{y}-X\hat{\symbolbold{w}})^T(\symbolbold{y}-X\hat{\symbolbold{w}})$,
+  对 $\hat{\symbolbold{w}}$ 求导得到:
+  \begin{equation}
+    \frac{\partial E_{\hat{\symbolbold{w}}}}{\partial \hat{\symbolbold{w}}} = 2X^T(X\hat{\symbolbold{w}} - y)
+  \end{equation}
+- 令上式为零可以求得 $\hat{\symbolbold{w}}$ 的最优解。
+  - 如果 $X^TX$ 为满秩矩阵或者正定矩阵，则 $\hat{\symbolbold{w}}=(X^TX)^{-1}X^Ty$
+  - 其他情况，将由学习算法的归纳偏好决定，常用的方法是正则化 (~regularization~).
+
+** 广义线性模型 (~generalized linear model~)
+
+#+BEGIN_QUOTE
+考虑单调可微函数 $g(\cdot)$, 令 $y=g^{-1}(\symbolbold{w}^T\symbolbold{x} + b)$,
+这样的模型称为 "广义线性模型" (~generalized linear model~), 其中， $g(\cdot)$ 称
+为 "联系函数" (~link function~).
+#+END_QUOTE
+
+* 对数几率回归
+
+- 分类任务可以通过广义线性模型进行处理： *只需要找一个单调可微函数将分类任务的真
+  实标记 $y$ 与线性回归模型的预测值联系起来*
+- 最理想情况是单位阶跃函数
+  \begin{equation}
+  y =
+    \left\{
+        \begin{array}{lr}
+          0, & z < 0,\\
+          0.5,& z = 0,\\
+          1,& z > 0.
+        \end{array}
+  \end{equation}
+- 单位阶跃函数并不连续，采用对数几率函数 (~logistic function~) 作为替代
+  \begin{equation}
+    y = \frac{1}{1+e^{-z}}
+  \end{equation}
+  其中， $z=\symbolbold{w}^T\symbolbold{x} + b$
+- 上式可以变化为 $ln\frac{y}{1-y} = \symbolbold{w}^T\symbolbold{x} + b$, 如果将
+  $y$ 视为样本 $\symbolbold{x}$ 正例的可能性，则 $1-y$ 是其反例的可能性，两者比
+  值 $\frac{y}{1-y}$ 称为 "几率" (~odds~)[fn:1], 取对数，则称之为 “对数几率”
+  (~log odds~).
+- 用线性回归模型预测结果去逼近真实标记的对数几率，称之为 “对数几率回归”
+  (~logistic regression~)
+
+** Logistic Regression 优点
+1. 直接对分类建模，无需实现假设数据分布，避免了假设分布不准确带来的问题
+2. Logistic Regression 不仅预测出 “类别”，更是可以得到近似概率预测，对许多需要利
+   用概率辅助决策的任务很有用
+3. 几率函数是任意阶可导的凸函数，有很好的数学性质，现有的许多数值优化算法都可以
+   用于求取最优解。
+** 参数求解
+
+* 线性判别分析
+* 多分类学习
+* 类别不平衡问题
+
+* Footnotes
+
+[fn:1] 或者，叫胜算、事件的发生比更合适？

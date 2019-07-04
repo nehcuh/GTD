@@ -1,0 +1,21 @@
+#+TITLE: 日程规划
+
+* Project
+
+针对比较大的学习计划或工作计划
+
+* Daily
+
+短时间可以完成的 task
+
+* Montly
+
+长远规划的 task
+
+* Future
+
+未来需要达成的
+
+* Habit
+
+定期完成任务

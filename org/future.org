@@ -1,0 +1,9 @@
+#+TITLE: 未来规划
+
+* TODO OpenCV 学习
+
+* TODO Cuda 学习
+
+* TODO 计算机视觉
+
+* TODO 机器学习视频准备
