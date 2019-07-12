@@ -1,0 +1,14 @@
+#+TITLE: HABBIT
+#+CAPTION: 不积跬步无以至千里，不积小流无以成江海
+
+* Leetcode 练习
+SCHEDULED: <2019-07-08 Mon 22:00 .+1d>
+
+* 微信公众号
+SCHEDULED: <2019-07-12 Fri 10:00 .+1w>
+
+* C/C++ 基础
+SCHEDULED: <2019-07-08 Mon 21:00 .+1d>
+:LOGBOOK:
+CLOCK: [2019-07-09 Tue 20:31]--[2019-07-09 Tue 21:13] =>  0:42
+:END:
